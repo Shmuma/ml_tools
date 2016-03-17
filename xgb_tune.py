@@ -232,6 +232,24 @@ def calibrate_n_estimators(data, params):
     return n_estimators
 
 
+def find_subsample_colsample(data, params):
+    param_test = {
+        'subsample': [i/10.0 for i in range(6, 11)],
+        'colsample_bytree': [i/10.0 for i in range(6, 11)],
+    }
+
+    log.info("Starting search in %s", param_test)
+    cls = make_xgb(params)
+    gsearch = GridSearchCV(estimator=cls, param_grid=param_test,
+                           scoring='roc_auc', n_jobs=1, iid=False, cv=5)
+    gsearch.fit(data['features'], data['labels'])
+
+    best = gsearch.best_params_
+    score = gsearch.best_score_
+    log.info("Found params %s with score %s", best, score)
+    return best['subsample'], best['colsample_bytree']
+
+
 if __name__ == "__main__":
     DEBUG = True
 
@@ -347,6 +365,20 @@ if __name__ == "__main__":
         n_estimators_2 = calibrate_n_estimators(data, params)
         params['tuned']['n_estimators'] = n_estimators_2
         step_done = 4
+        write_state(args.state, params, step_done)
+
+    if step_done < 5:
+        # tune subsample and colsample_bytree
+        marktime.start("step_5")
+        log.info("Looking for optimal subsample and colsample_bytree")
+        subsample, colsample_by_tree = find_subsample_colsample(data, params)
+        log.info("Found subsample=%f and colsample_bytree=%f in %s", subsample, colsample_by_tree,
+                 task_done("step_5"))
+
+        commit_param(params, "subsample", subsample)
+        commit_param(params, "colsample_bytree", colsample_by_tree)
+        show_params(params)
+        step_done = 5
         write_state(args.state, params, step_done)
 
     log.info("XGB_tune done in %s", task_done("start"))
