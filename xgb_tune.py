@@ -151,7 +151,7 @@ def find_maxdepth_minchildweight(data, params):
         gsearch.fit(data['features'], data['labels'])
         best = gsearch.best_params_
         score = gsearch.best_score_
-        log.info("Frist step found params %s with score %s in %s", best, score, task_done("first_step"))
+        log.info("First step found params %s with score %s in %s", best, score, task_done("first_step"))
 
         # handle boundary value
         boundary = False
@@ -248,6 +248,44 @@ def find_subsample_colsample(data, params):
     score = gsearch.best_score_
     log.info("Found params %s with score %s", best, score)
     return best['subsample'], best['colsample_bytree']
+
+
+def find_alpha_lambda(data, params):
+    param_test = {
+        'reg_alpha': np.power(10.0, range(-5, 4)),
+        'reg_lambda': np.power(10.0, range(-5, 4))
+    }
+
+    marktime.start("first_step")
+    cls = make_xgb(params)
+    log.info("First step, search in %s", param_test)
+    gsearch = GridSearchCV(estimator=cls, param_grid=param_test, scoring='roc_auc',
+                           n_jobs=1, iid=False, cv=5)
+    gsearch.fit(data['features'], data['labels'])
+    best = gsearch.best_params_
+    score = gsearch.best_score_
+    log.info("First step found params %s with score %s in %s",
+             best, score, task_done("first_step"))
+
+    reg_alpha = best['reg_alpha']
+    reg_lambda = best['reg_lambda']
+
+    param_test = {
+        'reg_alpha': np.linspace(reg_alpha / 5.0, reg_alpha * 5.0, num=10),
+        'reg_lambda': np.linspace(reg_lambda / 5.0, reg_lambda * 5.0, num=10)
+    }
+
+    marktime.start("second_step")
+    log.info("Second step, search in %s", param_test)
+    gsearch = GridSearchCV(estimator=cls, param_grid=param_test, scoring='roc_auc',
+                           n_jobs=1, iid=False, cv=5)
+    gsearch.fit(data['features'], data['labels'])
+    best = gsearch.best_params_
+    score = gsearch.best_score_
+    log.info("Second step found params %s with score %s in %s",
+             best, score, task_done("second_step"))
+
+    return best['reg_alpha'], best['reg_lambda']
 
 
 if __name__ == "__main__":
@@ -380,6 +418,19 @@ if __name__ == "__main__":
         show_params(params)
         step_done = 5
         write_state(args.state, params, step_done)
+
+    if step_done < 6:
+        # tune regularisation parameters
+        marktime.start("step_6")
+        log.info("Looking for optimal L1 and L2 regularisation params")
+        reg_alpha, reg_lambda = find_alpha_lambda(data, params)
+        log.info("Found alpha=%f and lambda=%f in %s", reg_alpha, reg_lambda,
+                 task_done("step_6"))
+        commit_param(params, "reg_alpha", reg_alpha)
+        commit_param(params, "reg_lambda", reg_lambda)
+        show_params(params)
+        #step_done = 6
+        #write_state(args.state, params, step_done)
 
     log.info("XGB_tune done in %s", task_done("start"))
     show_params(params)
