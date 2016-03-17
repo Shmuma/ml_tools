@@ -57,7 +57,8 @@ def find_n_estimators(cls, data, cv_folds=5, early_stopping_rounds=50):
     xgb_params = cls.get_xgb_params()
     xgtrain = xgb.DMatrix(data['features'], label=data['labels'])
     cvresult = xgb.cv(xgb_params, xgtrain, num_boost_round=cls.get_params()['n_estimators'],
-                      nfold=cv_folds, metrics=args.metric, early_stopping_rounds=early_stopping_rounds)
+                      nfold=cv_folds, metrics=args.metric, early_stopping_rounds=early_stopping_rounds,
+                      show_progress=False)
     log.info("N_estimators search done in %s, result=%d", task_done("find_n_estimators"), cvresult.shape[0])
     return cvresult.shape[0]
 
@@ -68,7 +69,7 @@ def make_xgb(params, extra=None):
     opts.update(params['fixed'])
     if extra is not None:
         opts.update(extra)
-    return XGBClassifier(**opts)
+    return XGBClassifier(silent=True, **opts)
 
 
 def find_init_learning_rate(data, params):
