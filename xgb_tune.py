@@ -11,15 +11,14 @@ import numpy as np
 import xgboost as xgb
 from xgboost.sklearn import XGBClassifier
 from sklearn.grid_search import GridSearchCV
-from sklearn.cross_validation import train_test_split
 
 
 def setup_logging(logfile, level=log.INFO):
-    format = "%(asctime)s %(levelname)s %(message)s"
+    fmt = "%(asctime)s %(levelname)s %(message)s"
     if logfile is not None:
-        log.basicConfig(filename=logfile, level=level, format=format)
+        log.basicConfig(filename=logfile, level=level, format=fmt)
     else:
-        log.basicConfig(level=level, format=format)
+        log.basicConfig(level=level, format=fmt)
 
 
 def task_done(task_name):
@@ -56,20 +55,17 @@ def commit_param(params, name, value):
 def find_n_estimators(cls, data, cv_folds=5, early_stopping_rounds=50):
     marktime.start("find_n_estimators")
     xgb_params = cls.get_xgb_params()
-    xgtrain = xgb.DMatrix(data['features_train'], label=data['labels_train'])
+    xgtrain = xgb.DMatrix(data['features'], label=data['labels'])
     cvresult = xgb.cv(xgb_params, xgtrain, num_boost_round=cls.get_params()['n_estimators'],
                       nfold=cv_folds, metrics=args.metric, early_stopping_rounds=early_stopping_rounds)
     log.info("N_estimators search done in %s, result=%d", task_done("find_n_estimators"), cvresult.shape[0])
     return cvresult.shape[0]
 
 
-def make_xgb(params, wipe=None, extra=None):
+def make_xgb(params, extra=None):
     opts = dict(params['default'])
     opts.update(params['tuned'])
     opts.update(params['fixed'])
-    if wipe is not None:
-        for k in wipe:
-            del opts[k]
     if extra is not None:
         opts.update(extra)
     return XGBClassifier(**opts)
@@ -83,8 +79,7 @@ def find_init_learning_rate(data, params):
     """
     for lr in np.linspace(1.0, 0.01, num=10):
         log.info("Trying LR=%f", lr)
-        cls = make_xgb(params, wipe=['learning_rate', 'n_estimators'],
-                       extra={'n_estimators': 100000, 'learning_rate': lr})
+        cls = make_xgb(params, extra={'n_estimators': 100000, 'learning_rate': lr})
         n_estimators = find_n_estimators(cls, data, early_stopping_rounds=20)
         if n_estimators > 50:
             return lr, n_estimators
@@ -95,7 +90,6 @@ def find_init_learning_rate(data, params):
 
 def is_on_right_bound(value, range):
     return value == range[-1]
-
 
 
 def find_maxdepth_minchildweight(data, params):
@@ -113,7 +107,7 @@ def find_maxdepth_minchildweight(data, params):
         gsearch = GridSearchCV(estimator=cls, param_grid=param_test,
                                scoring='roc_auc', n_jobs=1, iid=False, cv=5)
 
-        gsearch.fit(data['features_train'], data['labels_train'])
+        gsearch.fit(data['features'], data['labels'])
         best = gsearch.best_params_
         score = gsearch.best_score_
         log.info("Frist step found params %s with score %s in %s", best, score, task_done("first_step"))
@@ -147,7 +141,7 @@ def find_maxdepth_minchildweight(data, params):
     gsearch = GridSearchCV(estimator=cls, param_grid=param_test,
                            scoring='roc_auc', n_jobs=1, iid=False, cv=5)
 
-    gsearch.fit(data['features_train'], data['labels_train'])
+    gsearch.fit(data['features'], data['labels'])
     best = gsearch.best_params_
     score = gsearch.best_score_
     log.info("Second step found %s with score %s in %s", best, score, task_done('second_step'))
@@ -169,7 +163,7 @@ def find_gamma(data, params):
         gsearch = GridSearchCV(estimator=cls, param_grid=param_test,
                                scoring='roc_auc', n_jobs=1, iid=False, cv=5)
 
-        gsearch.fit(data['features_train'], data['labels_train'])
+        gsearch.fit(data['features'], data['labels'])
         best = gsearch.best_params_['gamma']
         score = gsearch.best_score_
         log.info("Frist step found params %s with score %s in %s", gsearch.best_params_,
@@ -186,6 +180,15 @@ def find_gamma(data, params):
         iteration += 1
 
     return best
+
+
+def calibrate_n_estimators(data, params):
+    marktime.start('calibrate')
+    log.info("Calibrate n_estimators to new options")
+    cls = make_xgb(params, extra={'n_estimators': 100000})
+    n_estimators = find_n_estimators(cls, data, early_stopping_rounds=20)
+    log.info("N_estimators calibrated to %d in %s", n_estimators, task_done("calibrate"))
+    return n_estimators
 
 
 if __name__ == "__main__":
@@ -221,10 +224,6 @@ if __name__ == "__main__":
         log.error("Shape of features and labels don't match!")
         sys.exit(1)
 
-    log.info("Split data to train/test set")
-    features_train, features_test, labels_train, labels_test = \
-        train_test_split(features, labels, train_size = 0.8, random_state=args.seed)
-
     # parameters
     params_default = {
         'learning_rate': 0.5,
@@ -254,10 +253,6 @@ if __name__ == "__main__":
     data = {
         'features': features,
         'labels': labels,
-        'features_train': features_train,
-        'features_test': features_test,
-        'labels_train': labels_train,
-        'labels_test': labels_test,
     }
 
     show_params(params)
@@ -294,12 +289,21 @@ if __name__ == "__main__":
     show_params(params)
 
     # step three: gamma
-    marktime.start("step_3")
-    log.info("Looking for optimal gamma")
-    gamma = find_gamma(data, params)
-    log.info("Found gamma=%f in %s", gamma, task_done("step_3"))
+    if not DEBUG:
+        marktime.start("step_3")
+        log.info("Looking for optimal gamma")
+        gamma = find_gamma(data, params)
+        log.info("Found gamma=%f in %s", gamma, task_done("step_3"))
+    else:
+        gamma = 0.0
 
     commit_param(params, 'gamma', gamma)
+
+    show_params(params)
+
+    # calibrate n_estimators with new params
+    n_estimators_2 = calibrate_n_estimators(data, params)
+    params['tuned']['n_estimators'] = n_estimators_2
 
     log.info("XGB_tune done in %s", task_done("start"))
     show_params(params)
