@@ -93,7 +93,7 @@ def find_init_learning_rate(data, params):
     return 0.3, 50
 
 
-def is_on_bound(value, range):
+def is_on_right_bound(value, range):
     return value == range[0] or value == range[-1]
 
 
@@ -103,9 +103,7 @@ def find_maxdepth_minchildweight(data, params):
         'max_depth': range(0, 10, 2),
         'min_child_weight': range(1, 6, 2)
     }
-
-    centers = {
-    }
+    centers = {}
 
     iteration = 0
     while True:
@@ -123,7 +121,7 @@ def find_maxdepth_minchildweight(data, params):
         # handle boundary value
         boundary = False
         for key in param_test.keys():
-            if is_on_bound(best[key], param_test[key]):
+            if is_on_right_bound(best[key], param_test[key]):
                 end = param_test[key][-1]
                 param_test[key] = range(end, end+len(param_test[key])+2, 2)
                 log.info("Optimal value for %s is on boundary (%s), shift range and iterate again",
@@ -157,7 +155,42 @@ def find_maxdepth_minchildweight(data, params):
     return best['max_depth'], best['min_child_weight']
 
 
+def find_gamma(data, params):
+    param_test = {
+        'gamma': [i/10.0 for i in range(0, 8)]
+    }
+
+    iteration = 0
+    best = 0.0
+    while True:
+        marktime.start('first_step')
+        cls = make_xgb(params)
+        log.info("Fist step, iteration=%d, search in %s", iteration, param_test)
+        gsearch = GridSearchCV(estimator=cls, param_grid=param_test,
+                               scoring='roc_auc', n_jobs=1, iid=False, cv=5)
+
+        gsearch.fit(data['features_train'], data['labels_train'])
+        best = gsearch.best_params_['gamma']
+        score = gsearch.best_score_
+        log.info("Frist step found params %s with score %s in %s", gsearch.best_params_,
+                 score, task_done("first_step"))
+
+        # handle boundary value
+        if is_on_right_bound(best, param_test['gamma']):
+            end = int(param_test['gamma'][-1]*10)
+            param_test['gamma'] = [i/10 for i in range(end, end+len(param_test['gamma']))]
+            log.info("Optimal value is on boundary (%s), shift range and iterate again", best)
+        else:
+            log.info("Found optimal value for gamma=%s", best)
+            break
+        iteration += 1
+
+    return best
+
+
 if __name__ == "__main__":
+    DEBUG = True
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--features", required=True, help="Input features file to use in numpy binary format")
     parser.add_argument("--labels", required=True, help="File with labels in numpy binary format")
@@ -230,7 +263,7 @@ if __name__ == "__main__":
     show_params(params)
 
     # step one: find learning rate which gives reasonable amount of estimators
-    if False:
+    if not DEBUG:
         marktime.start("learning_rate_1")
         log.info("Looking for initial learning rate")
         learning_rate_1, n_estimators_1 = find_init_learning_rate(data, params)
@@ -246,14 +279,27 @@ if __name__ == "__main__":
     show_params(params)
 
     # step two: max_depth and min_child_weight
-    marktime.start("step_2")
-    log.info("Looking for optimal max_depth and min_child_weight")
-    max_depth, min_child_weight = find_maxdepth_minchildweight(data, params)
-    log.info("Found max_depth=%d and min_child_weight=%d in %s", max_depth, min_child_weight,
-             task_done("step_2"))
+    if not DEBUG:
+        marktime.start("step_2")
+        log.info("Looking for optimal max_depth and min_child_weight")
+        max_depth, min_child_weight = find_maxdepth_minchildweight(data, params)
+        log.info("Found max_depth=%d and min_child_weight=%d in %s", max_depth, min_child_weight,
+                 task_done("step_2"))
+    else:
+        max_depth, min_child_weight = 4, 11
 
     commit_param(params, 'max_depth', max_depth)
     commit_param(params, 'min_child_weight', min_child_weight)
+
+    show_params(params)
+
+    # step three: gamma
+    marktime.start("step_3")
+    log.info("Looking for optimal gamma")
+    gamma = find_gamma(data, params)
+    log.info("Found gamma=%f in %s", gamma, task_done("step_3"))
+
+    commit_param(params, 'gamma', gamma)
 
     log.info("XGB_tune done in %s", task_done("start"))
     show_params(params)
