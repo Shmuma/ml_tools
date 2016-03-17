@@ -2,6 +2,8 @@
 Xgboost fine-tuning automation script.
 """
 import sys
+import os
+import json
 import marktime
 from datetime import timedelta
 import argparse
@@ -52,6 +54,43 @@ def commit_param(params, name, value):
     params['tuned'][name] = value
 
 
+def read_state(state_file, params):
+    """
+    Read state from file into params, return last done step
+    :param state_file:
+    :param params:
+    :return:
+    """
+    if state_file is None:
+        return 0
+
+    if not os.path.exists(state_file):
+        log.info("State file %s not found, starting from scratch", state_file)
+        return 0
+
+    with open(state_file, "r") as fd:
+        dat = json.load(fd)
+        params['default'] = dat['default']
+        params['tuned'] = dat['tuned']
+        step_done = dat['step_done']
+        log.info("State loaded from %s, last done step=%d", state_file, step_done)
+        return step_done
+
+
+def write_state(state_file, params, step_done):
+    if state_file is None:
+        return
+
+    log.info("Save state to %s", state_file)
+    with open(state_file, "w+") as fd:
+        dat = {
+            'default': params['default'],
+            'tuned': params['tuned'],
+            'step_done': step_done
+        }
+        json.dump(dat, fd, indent=4)
+
+
 def find_n_estimators(cls, data, cv_folds=5, early_stopping_rounds=50):
     marktime.start("find_n_estimators")
     xgb_params = cls.get_xgb_params()
@@ -59,8 +98,9 @@ def find_n_estimators(cls, data, cv_folds=5, early_stopping_rounds=50):
     cvresult = xgb.cv(xgb_params, xgtrain, num_boost_round=cls.get_params()['n_estimators'],
                       nfold=cv_folds, metrics=args.metric, early_stopping_rounds=early_stopping_rounds,
                       show_progress=False)
-    log.info("N_estimators search done in %s, result=%d", task_done("find_n_estimators"), cvresult.shape[0])
-    return cvresult.shape[0]
+    n_estimators = cvresult.shape[0]-1
+    log.info("N_estimators search done in %s, result=%d", task_done("find_n_estimators"), n_estimators)
+    return n_estimators
 
 
 def make_xgb(params, extra=None):
@@ -199,6 +239,7 @@ if __name__ == "__main__":
     parser.add_argument("--features", required=True, help="Input features file to use in numpy binary format")
     parser.add_argument("--labels", required=True, help="File with labels in numpy binary format")
     parser.add_argument("--log", required=False, help="Send log file to file instead of stdout")
+    parser.add_argument("--state", help="If specified, state will be saved to or read from this file")
 
     parser.add_argument("--seed", type=int, default=42, help="Random seed value to use, default=42")
     parser.add_argument("--cores", type=int, default=None, help="Limit amount of cores to use, default=None")
@@ -256,55 +297,57 @@ if __name__ == "__main__":
         'labels': labels,
     }
 
-    show_params(params)
+    step_done = read_state(args.state, params)
 
-    # step one: find learning rate which gives reasonable amount of estimators
-    if not DEBUG:
+    if step_done < 1:
+        show_params(params)
+
+        # step one: find learning rate which gives reasonable amount of estimators
         marktime.start("learning_rate_1")
         log.info("Looking for initial learning rate")
         learning_rate_1, n_estimators_1 = find_init_learning_rate(data, params)
         log.info("Initial learning_rate %f and n_estimators %d found in %s", learning_rate_1,
                  n_estimators_1, task_done("learning_rate_1"))
-    else:
-        learning_rate_1, n_estimators_1 = 0.23, 81
 
-    # move this learning rate
-    commit_param(params, 'learning_rate', learning_rate_1)
-    commit_param(params, 'n_estimators', n_estimators_1)
+        # move this learning rate
+        commit_param(params, 'learning_rate', learning_rate_1)
+        commit_param(params, 'n_estimators', n_estimators_1)
+        show_params(params)
+        step_done = 1
+        write_state(args.state, params, step_done)
 
-    show_params(params)
-
-    # step two: max_depth and min_child_weight
-    if not DEBUG:
+    if step_done < 2:
+        # step two: max_depth and min_child_weight
         marktime.start("step_2")
         log.info("Looking for optimal max_depth and min_child_weight")
         max_depth, min_child_weight = find_maxdepth_minchildweight(data, params)
         log.info("Found max_depth=%d and min_child_weight=%d in %s", max_depth, min_child_weight,
                  task_done("step_2"))
-    else:
-        max_depth, min_child_weight = 4, 11
 
-    commit_param(params, 'max_depth', max_depth)
-    commit_param(params, 'min_child_weight', min_child_weight)
+        commit_param(params, 'max_depth', max_depth)
+        commit_param(params, 'min_child_weight', min_child_weight)
+        show_params(params)
+        step_done = 2
+        write_state(args.state, params, step_done)
 
-    show_params(params)
-
-    # step three: gamma
-    if not DEBUG:
+    if step_done < 3:
+        # step three: gamma
         marktime.start("step_3")
         log.info("Looking for optimal gamma")
         gamma = find_gamma(data, params)
         log.info("Found gamma=%f in %s", gamma, task_done("step_3"))
-    else:
-        gamma = 0.0
 
-    commit_param(params, 'gamma', gamma)
+        commit_param(params, 'gamma', gamma)
+        show_params(params)
+        step_done = 3
+        write_state(args.state, params, step_done)
 
-    show_params(params)
-
-    # calibrate n_estimators with new params
-    n_estimators_2 = calibrate_n_estimators(data, params)
-    params['tuned']['n_estimators'] = n_estimators_2
+    if step_done < 4:
+        # calibrate n_estimators with new params
+        n_estimators_2 = calibrate_n_estimators(data, params)
+        params['tuned']['n_estimators'] = n_estimators_2
+        step_done = 4
+        write_state(args.state, params, step_done)
 
     log.info("XGB_tune done in %s", task_done("start"))
     show_params(params)
