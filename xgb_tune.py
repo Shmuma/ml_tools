@@ -94,7 +94,7 @@ def find_init_learning_rate(data, params):
 
 
 def is_on_right_bound(value, range):
-    return value == range[0] or value == range[-1]
+    return value == range[-1]
 
 
 
@@ -178,7 +178,7 @@ def find_gamma(data, params):
         # handle boundary value
         if is_on_right_bound(best, param_test['gamma']):
             end = int(param_test['gamma'][-1]*10)
-            param_test['gamma'] = [i/10 for i in range(end, end+len(param_test['gamma']))]
+            param_test['gamma'] = [i/10.0 for i in range(end, end+len(param_test['gamma']))]
             log.info("Optimal value is on boundary (%s), shift range and iterate again", best)
         else:
             log.info("Found optimal value for gamma=%s", best)
