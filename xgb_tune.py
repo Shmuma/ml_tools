@@ -10,6 +10,7 @@ import logging as log
 import numpy as np
 import xgboost as xgb
 from xgboost.sklearn import XGBClassifier
+from sklearn.grid_search import GridSearchCV
 from sklearn.cross_validation import train_test_split
 
 
@@ -44,6 +45,14 @@ def show_params(params):
             log.info("  %-20s %s", key+":", str(params[kind][key]))
 
 
+def commit_param(params, name, value):
+    """
+    Assign param value and move it from default to tuned
+    """
+    del params['default'][name]
+    params['tuned'][name] = value
+
+
 def find_n_estimators(cls, data, cv_folds=5, early_stopping_rounds=50):
     marktime.start("find_n_estimators")
     xgb_params = cls.get_xgb_params()
@@ -54,26 +63,98 @@ def find_n_estimators(cls, data, cv_folds=5, early_stopping_rounds=50):
     return cvresult.shape[0]
 
 
+def make_xgb(params, wipe=None, extra=None):
+    opts = dict(params['default'])
+    opts.update(params['tuned'])
+    opts.update(params['fixed'])
+    if wipe is not None:
+        for k in wipe:
+            del opts[k]
+    if extra is not None:
+        opts.update(extra)
+    return XGBClassifier(**opts)
+
+
 def find_init_learning_rate(data, params):
     """
     Find learning rate which converges in ~50 iterations. This gives more or less accurate results in
     reasonable time.
     :return: learning rate, number of estimators
     """
-    opts = dict(params['default'])
-    opts.update(params['fixed'])
-    del opts['learning_rate']
-    del opts['n_estimators']
-
     for lr in np.linspace(1.0, 0.01, num=10):
         log.info("Trying LR=%f", lr)
-        cls = XGBClassifier(n_estimators=100000, learning_rate=lr, **opts)
+        cls = make_xgb(params, wipe=['learning_rate', 'n_estimators'],
+                       extra={'n_estimators': 100000, 'learning_rate': lr})
         n_estimators = find_n_estimators(cls, data, early_stopping_rounds=20)
         if n_estimators > 50:
             return lr, n_estimators
 
     log.warn("We failed to find initial learning rate, fall back to defaults. You should report this to author!")
     return 0.3, 50
+
+
+def is_on_bound(value, range):
+    return value == range[0] or value == range[-1]
+
+
+
+def find_maxdepth_minchildweight(data, params):
+    param_test = {
+        'max_depth': range(0, 10, 2),
+        'min_child_weight': range(1, 6, 2)
+    }
+
+    centers = {
+    }
+
+    iteration = 0
+    while True:
+        marktime.start('first_step')
+        cls = make_xgb(params)
+        log.info("Fist step, iteration=%d, search in %s", iteration, param_test)
+        gsearch = GridSearchCV(estimator=cls, param_grid=param_test,
+                               scoring='roc_auc', n_jobs=1, iid=False, cv=5)
+
+        gsearch.fit(data['features_train'], data['labels_train'])
+        best = gsearch.best_params_
+        score = gsearch.best_score_
+        log.info("Frist step found params %s with score %s in %s", best, score, task_done("first_step"))
+
+        # handle boundary value
+        boundary = False
+        for key in param_test.keys():
+            if is_on_bound(best[key], param_test[key]):
+                end = param_test[key][-1]
+                param_test[key] = range(end, end+len(param_test[key])+2, 2)
+                log.info("Optimal value for %s is on boundary (%s), shift range and iterate again",
+                         key, best[key])
+                boundary = True
+
+        if not boundary:
+            for key in param_test.keys():
+                centers[key] = best[key]
+                del param_test[key]
+                log.info("Found optimal value for %s=%s", key, centers[key])
+            break
+        iteration += 1
+
+    # do fine-tuning
+    param_test = {
+        key: [val-1, val, val+1] for key, val in centers.iteritems()
+    }
+
+    marktime.start("second_step")
+    cls = make_xgb(params)
+    log.info("Second step, search in %s", param_test)
+    gsearch = GridSearchCV(estimator=cls, param_grid=param_test,
+                           scoring='roc_auc', n_jobs=1, iid=False, cv=5)
+
+    gsearch.fit(data['features_train'], data['labels_train'])
+    best = gsearch.best_params_
+    score = gsearch.best_score_
+    log.info("Second step found %s with score %s in %s", best, score, task_done('second_step'))
+
+    return best['max_depth'], best['min_child_weight']
 
 
 if __name__ == "__main__":
@@ -149,17 +230,30 @@ if __name__ == "__main__":
     show_params(params)
 
     # step one: find learning rate which gives reasonable amount of estimators
-    marktime.start("learning_rate_1")
-    log.info("Looking for initial learning rate")
-    learning_rate_1, n_estimators_1 = find_init_learning_rate(data, params)
-    log.info("Initial learning_rate %f and n_estimators %d found in %s", learning_rate_1,
-             n_estimators_1, task_done("learning_rate_1"))
+    if False:
+        marktime.start("learning_rate_1")
+        log.info("Looking for initial learning rate")
+        learning_rate_1, n_estimators_1 = find_init_learning_rate(data, params)
+        log.info("Initial learning_rate %f and n_estimators %d found in %s", learning_rate_1,
+                 n_estimators_1, task_done("learning_rate_1"))
+    else:
+        learning_rate_1, n_estimators_1 = 0.23, 81
 
     # move this learning rate
-    del params['default']['learning_rate']
-    del params['default']['n_estimators']
-    params['tuned']['learning_rate'] = learning_rate_1
-    params['tuned']['n_estimators'] = n_estimators_1
+    commit_param(params, 'learning_rate', learning_rate_1)
+    commit_param(params, 'n_estimators', n_estimators_1)
+
+    show_params(params)
+
+    # step two: max_depth and min_child_weight
+    marktime.start("step_2")
+    log.info("Looking for optimal max_depth and min_child_weight")
+    max_depth, min_child_weight = find_maxdepth_minchildweight(data, params)
+    log.info("Found max_depth=%d and min_child_weight=%d in %s", max_depth, min_child_weight,
+             task_done("step_2"))
+
+    commit_param(params, 'max_depth', max_depth)
+    commit_param(params, 'min_child_weight', min_child_weight)
 
     log.info("XGB_tune done in %s", task_done("start"))
     show_params(params)
