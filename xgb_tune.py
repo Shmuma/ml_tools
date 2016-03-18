@@ -62,11 +62,11 @@ def read_state(state_file, params):
     :return:
     """
     if state_file is None:
-        return 0
+        return 0, {}
 
     if not os.path.exists(state_file):
         log.info("State file %s not found, starting from scratch", state_file)
-        return 0
+        return 0, {}
 
     with open(state_file, "r") as fd:
         dat = json.load(fd)
@@ -74,10 +74,10 @@ def read_state(state_file, params):
         params['tuned'] = dat['tuned']
         step_done = dat['step_done']
         log.info("State loaded from %s, last done step=%d", state_file, step_done)
-        return step_done
+        return step_done, dat.get('score_history', {})
 
 
-def write_state(state_file, params, step_done):
+def write_state(state_file, params, step_done, score_history):
     if state_file is None:
         return
 
@@ -86,7 +86,8 @@ def write_state(state_file, params, step_done):
         dat = {
             'default': params['default'],
             'tuned': params['tuned'],
-            'step_done': step_done
+            'step_done': step_done,
+            'score_history': score_history
         }
         json.dump(dat, fd, indent=4)
 
@@ -99,8 +100,9 @@ def find_n_estimators(cls, data, cv_folds=5, early_stopping_rounds=50):
                       nfold=cv_folds, metrics=args.metric, early_stopping_rounds=early_stopping_rounds,
                       show_progress=False)
     n_estimators = cvresult.shape[0]-1
+    score = cvresult.iloc[n_estimators, 0]
     log.info("N_estimators search done in %s, result=%d", task_done("find_n_estimators"), n_estimators)
-    return n_estimators
+    return n_estimators, score
 
 
 def make_xgb(params, extra=None):
@@ -121,12 +123,12 @@ def find_init_learning_rate(data, params):
     for lr in np.linspace(1.0, 0.01, num=10):
         log.info("Trying LR=%f", lr)
         cls = make_xgb(params, extra={'n_estimators': 100000, 'learning_rate': lr})
-        n_estimators = find_n_estimators(cls, data, early_stopping_rounds=20)
+        n_estimators, score = find_n_estimators(cls, data, early_stopping_rounds=20)
         if n_estimators > 50:
-            return lr, n_estimators
+            return lr, n_estimators, score
 
     log.warn("We failed to find initial learning rate, fall back to defaults. You should report this to author!")
-    return 0.3, 50
+    return 0.3, 50, score
 
 
 def is_on_right_bound(value, range):
@@ -187,7 +189,7 @@ def find_maxdepth_minchildweight(data, params):
     score = gsearch.best_score_
     log.info("Second step found %s with score %s in %s", best, score, task_done('second_step'))
 
-    return best['max_depth'], best['min_child_weight']
+    return best['max_depth'], best['min_child_weight'], score
 
 
 def find_gamma(data, params):
@@ -220,16 +222,16 @@ def find_gamma(data, params):
             break
         iteration += 1
 
-    return best
+    return best, score
 
 
 def calibrate_n_estimators(data, params):
     marktime.start('calibrate')
     log.info("Calibrate n_estimators to new options")
     cls = make_xgb(params, extra={'n_estimators': 100000})
-    n_estimators = find_n_estimators(cls, data, early_stopping_rounds=20)
+    n_estimators, score = find_n_estimators(cls, data, early_stopping_rounds=20)
     log.info("N_estimators calibrated to %d in %s", n_estimators, task_done("calibrate"))
-    return n_estimators
+    return n_estimators, score
 
 
 def find_subsample_colsample(data, params):
@@ -247,7 +249,7 @@ def find_subsample_colsample(data, params):
     best = gsearch.best_params_
     score = gsearch.best_score_
     log.info("Found params %s with score %s", best, score)
-    return best['subsample'], best['colsample_bytree']
+    return best['subsample'], best['colsample_bytree'], score
 
 
 def find_alpha_lambda(data, params, reg_steps):
@@ -285,7 +287,7 @@ def find_alpha_lambda(data, params, reg_steps):
     log.info("Second step found params %s with score %s in %s",
              best, score, task_done("second_step"))
 
-    return best['reg_alpha'], best['reg_lambda']
+    return best['reg_alpha'], best['reg_lambda'], score
 
 
 if __name__ == "__main__":
@@ -342,6 +344,7 @@ if __name__ == "__main__":
         'objective': args.objective,
         'nthread': args.cores if args.cores is not None else 0,
     }
+
     params = {
         'default': params_default,
         'tuned': params_tuned,
@@ -354,7 +357,7 @@ if __name__ == "__main__":
         'labels': labels,
     }
 
-    step_done = read_state(args.state, params)
+    step_done, score_history = read_state(args.state, params)
 
     if step_done < 1:
         show_params(params)
@@ -362,22 +365,22 @@ if __name__ == "__main__":
         # step one: find learning rate which gives reasonable amount of estimators
         marktime.start("learning_rate_1")
         log.info("Looking for initial learning rate")
-        learning_rate_1, n_estimators_1 = find_init_learning_rate(data, params)
+        learning_rate_1, n_estimators_1, score = find_init_learning_rate(data, params)
         log.info("Initial learning_rate %f and n_estimators %d found in %s", learning_rate_1,
                  n_estimators_1, task_done("learning_rate_1"))
-
         # move this learning rate
         commit_param(params, 'learning_rate', learning_rate_1)
         commit_param(params, 'n_estimators', n_estimators_1)
         show_params(params)
         step_done = 1
-        write_state(args.state, params, step_done)
+        score_history[step_done] = score
+        write_state(args.state, params, step_done, score_history)
 
     if step_done < 2:
         # step two: max_depth and min_child_weight
         marktime.start("step_2")
         log.info("Looking for optimal max_depth and min_child_weight")
-        max_depth, min_child_weight = find_maxdepth_minchildweight(data, params)
+        max_depth, min_child_weight, score = find_maxdepth_minchildweight(data, params)
         log.info("Found max_depth=%d and min_child_weight=%d in %s", max_depth, min_child_weight,
                  task_done("step_2"))
 
@@ -385,35 +388,38 @@ if __name__ == "__main__":
         commit_param(params, 'min_child_weight', min_child_weight)
         show_params(params)
         step_done = 2
-        write_state(args.state, params, step_done)
+        score_history[step_done] = score
+        write_state(args.state, params, step_done, score_history)
 
     if step_done < 3:
         # step three: gamma
         marktime.start("step_3")
         log.info("Looking for optimal gamma")
-        gamma = find_gamma(data, params)
+        gamma, score = find_gamma(data, params)
         log.info("Found gamma=%f in %s", gamma, task_done("step_3"))
 
         commit_param(params, 'gamma', gamma)
         show_params(params)
         step_done = 3
-        write_state(args.state, params, step_done)
+        score_history[step_done] = score
+        write_state(args.state, params, step_done, score_history)
 
     if step_done < 4:
         # calibrate n_estimators with new params
-        n_estimators_2 = calibrate_n_estimators(data, params)
+        n_estimators_2, score = calibrate_n_estimators(data, params)
+        step_done = 4
         if n_estimators_2 > 100:
             log.info("Calibrated n_estimators is too large, ignore it")
         else:
             params['tuned']['n_estimators'] = n_estimators_2
-        step_done = 4
-        write_state(args.state, params, step_done)
+            score_history[step_done] = score
+        write_state(args.state, params, step_done, score_history)
 
     if step_done < 5:
         # tune subsample and colsample_bytree
         marktime.start("step_5")
         log.info("Looking for optimal subsample and colsample_bytree")
-        subsample, colsample_by_tree = find_subsample_colsample(data, params)
+        subsample, colsample_by_tree, score = find_subsample_colsample(data, params)
         log.info("Found subsample=%f and colsample_bytree=%f in %s", subsample, colsample_by_tree,
                  task_done("step_5"))
 
@@ -421,20 +427,22 @@ if __name__ == "__main__":
         commit_param(params, "colsample_bytree", colsample_by_tree)
         show_params(params)
         step_done = 5
-        write_state(args.state, params, step_done)
+        score_history[step_done] = score
+        write_state(args.state, params, step_done, score_history)
 
     if step_done < 6:
         # tune regularisation parameters
         marktime.start("step_6")
         log.info("Looking for optimal L1 and L2 regularisation params")
-        reg_alpha, reg_lambda = find_alpha_lambda(data, params, args.reg_steps)
+        reg_alpha, reg_lambda, score = find_alpha_lambda(data, params, args.reg_steps)
         log.info("Found alpha=%f and lambda=%f in %s", reg_alpha, reg_lambda,
                  task_done("step_6"))
         commit_param(params, "reg_alpha", reg_alpha)
         commit_param(params, "reg_lambda", reg_lambda)
         show_params(params)
         step_done = 6
-        write_state(args.state, params, step_done)
+        score_history[step_done] = score
+        write_state(args.state, params, step_done, score_history)
 
     log.info("XGB_tune done in %s", task_done("start"))
     log.info("Now you need to manually tune learning_rate, and enjoy you kaggle score!")
