@@ -402,7 +402,10 @@ if __name__ == "__main__":
     if step_done < 4:
         # calibrate n_estimators with new params
         n_estimators_2 = calibrate_n_estimators(data, params)
-        params['tuned']['n_estimators'] = n_estimators_2
+        if n_estimators_2 > 100:
+            log.info("Calibrated n_estimators is too large, ignore it")
+        else:
+            params['tuned']['n_estimators'] = n_estimators_2
         step_done = 4
         write_state(args.state, params, step_done)
 
