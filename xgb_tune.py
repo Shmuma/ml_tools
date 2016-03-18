@@ -250,10 +250,10 @@ def find_subsample_colsample(data, params):
     return best['subsample'], best['colsample_bytree']
 
 
-def find_alpha_lambda(data, params):
+def find_alpha_lambda(data, params, reg_steps):
     param_test = {
-        'reg_alpha': np.power(10.0, range(-5, 4)),
-        'reg_lambda': np.power(10.0, range(-5, 4))
+        'reg_alpha': np.power(10.0, np.linspace(-5.0, 4.0, num=reg_steps)),
+        'reg_lambda': np.power(10.0, np.linspace(-5.0, 4.0, num=reg_steps))
     }
 
     marktime.start("first_step")
@@ -271,8 +271,8 @@ def find_alpha_lambda(data, params):
     reg_lambda = best['reg_lambda']
 
     param_test = {
-        'reg_alpha': np.linspace(reg_alpha / 5.0, reg_alpha * 5.0, num=10),
-        'reg_lambda': np.linspace(reg_lambda / 5.0, reg_lambda * 5.0, num=10)
+        'reg_alpha': np.linspace(reg_alpha / 5.0, reg_alpha * 5.0, num=reg_steps),
+        'reg_lambda': np.linspace(reg_lambda / 5.0, reg_lambda * 5.0, num=reg_steps)
     }
 
     marktime.start("second_step")
@@ -302,6 +302,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--objective", default="binary:logistic", help="Tree objective to use, default=binary:logistic")
     parser.add_argument("--metric", default="auc", help="Metric to use, default=auc")
+    parser.add_argument("--reg-steps", default=10, type=int, help="How many steps to use in regularisation search")
 
     args = parser.parse_args()
 
@@ -423,14 +424,14 @@ if __name__ == "__main__":
         # tune regularisation parameters
         marktime.start("step_6")
         log.info("Looking for optimal L1 and L2 regularisation params")
-        reg_alpha, reg_lambda = find_alpha_lambda(data, params)
+        reg_alpha, reg_lambda = find_alpha_lambda(data, params, args.reg_steps)
         log.info("Found alpha=%f and lambda=%f in %s", reg_alpha, reg_lambda,
                  task_done("step_6"))
         commit_param(params, "reg_alpha", reg_alpha)
         commit_param(params, "reg_lambda", reg_lambda)
         show_params(params)
-        #step_done = 6
-        #write_state(args.state, params, step_done)
+        step_done = 6
+        write_state(args.state, params, step_done)
 
     log.info("XGB_tune done in %s", task_done("start"))
-    show_params(params)
+    log.info("Now you need to manually tune learning_rate, and enjoy you kaggle score!")
