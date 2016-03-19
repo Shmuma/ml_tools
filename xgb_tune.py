@@ -135,6 +135,11 @@ def is_on_right_bound(value, range):
     return value == range[-1]
 
 
+def show_grid_scores(scores):
+    for score in scores:
+        log.info(str(score))
+
+
 def find_maxdepth_minchildweight(data, params):
     param_test = {
         'max_depth': range(0, 10, 2),
@@ -153,6 +158,7 @@ def find_maxdepth_minchildweight(data, params):
         gsearch.fit(data['features'], data['labels'])
         best = gsearch.best_params_
         score = gsearch.best_score_
+        show_grid_scores(gsearch.grid_scores_)
         log.info("First step found params %s with score %s in %s", best, score, task_done("first_step"))
 
         # handle boundary value
@@ -187,6 +193,7 @@ def find_maxdepth_minchildweight(data, params):
     gsearch.fit(data['features'], data['labels'])
     best = gsearch.best_params_
     score = gsearch.best_score_
+    show_grid_scores(gsearch.grid_scores_)
     log.info("Second step found %s with score %s in %s", best, score, task_done('second_step'))
 
     return best['max_depth'], best['min_child_weight'], score
@@ -209,6 +216,7 @@ def find_gamma(data, params):
         gsearch.fit(data['features'], data['labels'])
         best = gsearch.best_params_['gamma']
         score = gsearch.best_score_
+        show_grid_scores(gsearch.grid_scores_)
         log.info("Frist step found params %s with score %s in %s", gsearch.best_params_,
                  score, task_done("first_step"))
 
@@ -248,6 +256,7 @@ def find_subsample_colsample(data, params):
 
     best = gsearch.best_params_
     score = gsearch.best_score_
+    show_grid_scores(gsearch.grid_scores_)
     log.info("Found params %s with score %s", best, score)
     return best['subsample'], best['colsample_bytree'], score
 
@@ -284,6 +293,7 @@ def find_alpha_lambda(data, params, reg_steps):
     gsearch.fit(data['features'], data['labels'])
     best = gsearch.best_params_
     score = gsearch.best_score_
+    show_grid_scores(gsearch.grid_scores_)
     log.info("Second step found params %s with score %s in %s",
              best, score, task_done("second_step"))
 
