@@ -11,7 +11,7 @@
 <a name="overview"/>
 ## Overview
 
-[XGBoost](https://github.com/dmlc/xgboost) is known to be extremely powerful
+[XGBoost](https://github.com/dmlc/xgboost) is known to be an extremely powerful
 tool, very popular in machine learning competitions like
 [Kaggle](https://www.kaggle.com/).
 
@@ -27,34 +27,33 @@ heruistic process described in it.
 <a name="idea"/>
 ## Idea, briefly
 
-XGBoost has about 8 parameters which influence final result. Even with modest
+XGBoost has about 8 parameters influencing the final result. Even with a modest
 grid search of 5 values per parameter we're facing with more than 390 thousands
-combinations. Assuming we'll be able to check one combination per minute (not
-very realistic assumption for large problems), it will take about 9 months. We
+combinations. Assuming we're be able to check one combination per minute (not
+very realistic assumption for large problems), it will take about 9 months to check them all. We
 can try to use random search instead of brute force, but it adds large degree of
 uncertanty to the process.
 
-Idea proposed in article is to do sequential optimisation of sets of parameters,
-step-by-step. On first steps we tune options responsible for tree structure (max
+The idea proposed in the article is doing sequential optimisation of sets of parameters,
+step-by-step. First, we tune options responsible for structure of trees (max
 depth, child_weight) and tune booster options on subsequent steps.
 
-To further improve speed of tuning, we do rough-tuning of paremeters first, and
-perform fine-tuning using denser intervals on second step.
+For further improving the speed of tuning, we split grid search of every step on 
+two stages: rough and fine, as most of parameters are integer. 
 
 <a name="steps"/>
 ## Steps and tuned options
 
 Xgb_tune does the following steps:
-* Find rough *learning_rate* value which converges in reasonable amount of
-  steps. On this step we're trying to find such learning rate with which steps count before
-  overfitting is more than 50 but less than 200.
-* Tune *max_depth* and *min_child_weight*
-* Tune *gamma*
-* Tune *subsample* and *colsample_bytree* options
+* Finding approximate *learning_rate* value giving us convergence in reasonable amount of
+  steps (between 50 and 200).
+* Tuning *max_depth* and *min_child_weight*
+* Tuning *gamma*
+* Tuning *subsample* and *colsample_bytree* options
 * Finally, ture regularisation parameters *alpha* and *lambda*
 
-All parameters first tuned with rough steps and after that fine-tuned using
-finer intervals. For example, *max_depth* first tried with values
+All the parameters first tuned with rough steps and after that fine-tuned using
+finer intervals. For example, *max_depth* is first grid-searched with values
 [2, 4, 6, 8, 10, 12, 14, 16] and after finding optimal value, we do checking of
 odd values around this optimum.
 
