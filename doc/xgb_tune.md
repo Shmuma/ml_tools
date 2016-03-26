@@ -1,4 +1,15 @@
-# XGB tune -- automatic xgboost tuner
+# XGB tune: automatic xgboost tuner
+
+## Table of contents
+[Overview](#overview)
+[Idea](#ida)
+[Steps and tuned options](#steps)
+[Installation](#installation)
+[Usage](#usage)
+
+
+<a name="overview"/>
+## Overview
 
 [XGBoost](https://github.com/dmlc/xgboost) is known to be extremely powerful
 tool, very popular in machine learning competitions like
@@ -13,6 +24,7 @@ xgb_tune.py is a tool which was inspired by an article
 couple of successfull application of this article, I decided to automate
 heruistic process described in it.
 
+<a name="idea"/>
 ## Idea, briefly
 
 XGBoost has about 8 parameters which influence final result. Even with modest
@@ -29,6 +41,7 @@ depth, child_weight) and tune booster options on subsequent steps.
 To further improve speed of tuning, we do rough-tuning of paremeters first, and
 perform fine-tuning using denser intervals on second step.
 
+<a name="steps"/>
 ## Steps and tuned options
 
 Xgb_tune does the following steps:
@@ -45,6 +58,7 @@ finer intervals. For example, *max_depth* first tried with values
 [2, 4, 6, 8, 10, 12, 14, 16] and after finding optimal value, we do checking of
 odd values around this optimum.
 
+<a name="installation"/>
 ## Installation
 
 xgb_tune doesn't need installation and self-contained. Required modules are:
@@ -53,4 +67,5 @@ xgb_tune doesn't need installation and self-contained. Required modules are:
 * sklearn
 * [marktime](https://pypi.python.org/pypi/marktime)
 
+<a name="usage"/>
 ## Usage
