@@ -1,11 +1,11 @@
 # XGB tune: automatic xgboost tuner
 
 ## Table of contents
-[Overview](#overview)
-[Idea](#ida)
-[Steps and tuned options](#steps)
-[Installation](#installation)
-[Usage](#usage)
+* [Overview](#overview)
+* [Idea](#ida)
+* [Steps and tuned options](#steps)
+* [Installation](#installation)
+* [Usage](#usage)
 
 
 <a name="overview"/>
