@@ -123,8 +123,8 @@ def find_init_learning_rate(data, params):
     for lr in np.linspace(1.0, 0.01, num=10):
         log.info("Trying LR=%f", lr)
         cls = make_xgb(params, extra={'n_estimators': 100000, 'learning_rate': lr})
-        n_estimators, score = find_n_estimators(cls, data, early_stopping_rounds=20)
-        if n_estimators > 50:
+        n_estimators, score = find_n_estimators(cls, data, early_stopping_rounds=50)
+        if n_estimators > 100:
             return lr, n_estimators, score
 
     log.warn("We failed to find initial learning rate, fall back to defaults. You should report this to author!")
@@ -142,7 +142,7 @@ def show_grid_scores(scores):
 
 def find_maxdepth_minchildweight(data, params):
     param_test = {
-        'max_depth': range(0, 10, 2),
+        'max_depth': range(2, 16, 2),
         'min_child_weight': range(1, 6, 2)
     }
     centers = {}
@@ -418,7 +418,7 @@ if __name__ == "__main__":
         # calibrate n_estimators with new params
         n_estimators_2, score = calibrate_n_estimators(data, params)
         step_done = 4
-        if n_estimators_2 > 100:
+        if n_estimators_2 > 200:
             log.info("Calibrated n_estimators is too large, ignore it")
         else:
             params['tuned']['n_estimators'] = n_estimators_2
